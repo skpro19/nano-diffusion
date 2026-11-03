@@ -9,3 +9,8 @@ dependencies = [
     "numpy>=2.5.4",
     "zarr<3",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
