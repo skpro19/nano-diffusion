@@ -6,6 +6,34 @@
 - the git policy lives in `.pi/skills/git/SKILL.md` — load it with `/skill:git` before committing or pushing
 - for `.canvas.tsx` files, follow `.cursor/rules/canvas.mdc` (design template based on `cs231n-multi-head-attention.canvas.tsx`)
 
+## Project Structure (planned)
+- Goal: a minimal, readable Push-T Diffusion Policy based on `docs/diffusion.pdf`, using `datasets/pusht/pusht_cchi_v7_replay.zarr`.
+- Use a small root-level Python package (not a `src/` layout):
+
+```text
+nano-diffusion/
+├── pyproject.toml
+├── nano_diffusion/
+│   ├── __init__.py
+│   ├── dataset.py     # Episode splits, sequence sampling, normalization
+│   ├── model.py       # Conditional 1-D U-Net and, later, visual encoder
+│   ├── policy.py      # Diffusion loss and action sampling
+│   ├── train.py       # Training loop and checkpointing
+│   └── evaluate.py    # Push-T rollouts and coverage metrics
+├── configs/           # Training and evaluation configuration
+├── tests/
+│   └── test_dataset.py
+├── scripts/           # Dataset verification, replay, and other utilities
+├── datasets/          # Local data; ignored by Git
+└── runs/              # Generated logs/checkpoints; ignored by Git
+```
+
+- This is the agreed target structure, not a claim that these modules already exist. Create modules only when needed; avoid empty scaffolding and premature subpackages.
+- Start with `nano_diffusion/dataset.py` and `tests/test_dataset.py`: validate episode-level splits, training-only normalization statistics, and correctly aligned observation/action sequences before implementing the model.
+- Build and validate a state-conditioned policy first, then add visual conditioning.
+- Keep tests in `tests/`, standalone utilities in `scripts/`, and generated artifacts out of Git. Existing `checkpoints/` is also ignored.
+- Keep human-facing setup and usage instructions in `README.md` as functionality becomes available.
+
 ## Pi Sub-agents
 - When the `subagent` tool is available, delegate autonomously when it improves efficiency; explicit user requests are not required.
 - Available user-level agents: `scout` for codebase exploration, `planner` for implementation plans, `worker` for implementation and tests, and `reviewer` for read-only code review.
