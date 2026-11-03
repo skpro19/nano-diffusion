@@ -1,0 +1,11 @@
+[project]
+name = "nano-diffusion"
+version = "0.1.0"
+description = "Minimal Diffusion Policy implementation for Push-T"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numcodecs<0.16",
+    "numpy>=2.5.4",
+    "zarr<3",
+]

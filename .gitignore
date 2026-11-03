@@ -2,3 +2,12 @@ datasets/
 docs/
 __pycache__/
 .venv/
+
+# editor swap files
+*.swp
+
+# training artifacts
+runs/
+checkpoints/
+*.pt
+*.ckpt
