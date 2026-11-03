@@ -1,0 +1,328 @@
+---
+description: Run a fresh, logged Vast.ai sweep; explicitly resume an iteration
+argument-hint: "<sweep-spec> [--branch <name>] [--expected-commit <sha>] [--plan] [--resume <iteration-id>]"
+---
+
+Run an ACT v2 sweep using the committed driver:
+`.pi/prompts/scripts/vast-train/workflow.py`.
+Read this file and `vast-train-actv2.md` before execution. Do not reconstruct
+provisioning, state updates, or cleanup through ad hoc shell commands.
+
+## Inputs and invocation
+
+User arguments: `$ARGUMENTS`.
+
+- Require an explicit sweep spec path unless `--resume <iteration-id-or-dir>`
+  is supplied. `--resume` also accepts the short token `i<12 hex>` (the leading
+  `i` is optional). Ask only if a required input is missing; never guess a config.
+- Parse the spec path, optional `--branch`, `--expected-commit`, `--plan`, and `--resume`; reject other
+  arguments. Pass paths as quoted arguments, not interpolated shell programs.
+- A normal invocation **always creates a new iteration**, even for identical
+  configs. Never search for old `.state`/`.commit` files, reuse an older
+  iteration implicitly, or ask about completed/interrupted historical runs.
+- `--resume` continues only the specified iteration, using its saved configs
+  and pinned SHA. The source spec may have changed; it is not resolved again.
+- `--plan` creates immutable configs/state but performs no Vast/AWS operations.
+  Use the printed iteration ID with `--resume` to launch that saved plan.
+
+```bash
+uv run --frozen python .pi/prompts/scripts/vast-train/workflow.py \
+  --spec "$SWEEP_SPEC"
+# If explicitly supplied, add --branch "$BRANCH"; otherwise fresh runs use act-v2.
+# Add --plan for a local plan, or --resume "$ITERATION_ID" for explicit recovery.
+# Resume without an original spec: workflow.py --resume "$ITERATION_ID"
+```
+
+The driver performs Git preflight before resolving project configs, then
+rechecks the pinned revision before provisioning/setup/launch. Require a clean,
+anonymously synchronized checkout of the selected branch (fresh default: `act-v2`).
+Resume inherits the immutable saved branch and SHA; an explicit different
+`--branch` is rejected before execution. Legacy iterations without a branch use
+`act-v2` without rewriting historical manifests or watcher snapshots. Custom
+branches must already be checked out, clean and anonymously published. Artifact
+prefixes remain `act_v2` regardless of branch. Never automatically stash, commit,
+push, pull, reset, switch branches, or bypass a failed check.
+
+Local datasets are validated before renting with the shared action-mode
+preflight across every demo and selected image key; absent `action_mode` means
+joint targets. OSC requires actions and valid controller metadata. S3-only
+sources retain the existence check, then receive the same preflight remotely,
+with size/hash/camera checks before launch. Missing helpers in pinned code fail
+clearly rather than weakening validation. `--plan` does not inspect S3 or rent.
+
+## Execution contract
+
+The driver, not the agent, owns:
+
+- unique iteration IDs, immutable input/config snapshots and their hashes,
+  an ordered manifest (no directory glob), and iteration-specific run names;
+- a nonblocking iteration lock and atomic/fsynced state updates;
+- durable create intent and exact instance labels **before** create requests;
+  ambiguous requests reconcile on resume, never blindly create replacements;
+- one provisional rental at a time, up to three supported offers per combo,
+  hardware/network gates, bounded remote setup and dataset validation;
+- run-directory recording, local wrapper leases, conservative detached watcher
+  startup, service launch and handoff;
+- a fresh shared `check-handoff.py` exit-0 check, followed by an independent
+  fresh check, before advancing to the next combo;
+- reconciliation of this iteration only. Training outcome, artifact verification,
+  and verified removal are recorded separately. Historical iterations cannot
+  block a fresh invocation.
+
+Training overlaps across combos; each instance has its own watcher. The driver
+returns after handoff rather than waiting for training completion. Live watchers
+finish reports independently; `summary.txt` is a driver-time snapshot, refreshed
+on explicit resume, not a continuously updated dashboard.
+
+## Shared TensorBoard dashboard
+
+Each fresh ablation iteration gets **one local TensorBoard server**, shared by
+all its combos. Separate `/ablate` invocations get separate servers and URLs;
+explicit resume reuses or recovers only that iteration's recorded services.
+`--plan` starts no services and makes no S3 requests.
+
+The driver starts iteration-owned tmux services and records their allocated
+port/URL in `tensorboard/service.json`. A detached synchronizer reads only this
+iteration's recorded run prefixes from `s3://toy-act/runs/act_v2/<run>/`, using
+profile `toy-pickplace-backup`, and downloads only event files into distinct
+`tensorboard/logs/<combo>/<run>/` directories. It retries every 30 seconds,
+including after handoff and completion, so final uploads remain discoverable.
+Downloads are staged outside the watched log directory. Successful snapshots
+append to the cached event file after verifying its existing bytes match;
+shrinking or rewritten snapshots fail closed. This lets TensorBoard keep reading
+the same file instead of freezing on an older replaced file.
+Metrics lag the remote backup cadence (120-second pauses plus upload time),
+local synchronization and TensorBoard reload. This is not a real-time SSH feed.
+
+The server and synchronizer remain available after training finishes; completed
+runs stay cached for comparison. They are not reboot-supervised: explicit resume
+recovers them against the same cache and recorded port. Port/session conflicts
+block recovery; never steal an occupied port or kill an unrelated service.
+Diagnostics live in `tensorboard/server.log`, `tensorboard/driver.log`,
+`tensorboard/events.jsonl`, and `tensorboard/sync-status.json` beneath the iteration.
+To refresh a completed iteration's dashboard without running training stages:
+
+```bash
+uv run --frozen --only-group train python \
+  .pi/prompts/scripts/vast-train/ablation_tensorboard.py refresh "$ITERATION_DIR"
+```
+
+This verifies ownership before restarting only that iteration's dashboard
+sessions, downloads its recorded event files, and reuses its saved port/cache.
+It never provisions, launches training, reconciles outcomes, or removes instances.
+An unrelated occupied port blocks recovery; no unrelated service is stopped. The
+`/tb-s3` prompt wraps this recovery; pass an iteration ID, short token, or
+directory, or run it with no argument to choose from the saved dashboards.
+
+To stop a dashboard the user explicitly no longer wants:
+
+```bash
+uv run --frozen python .pi/prompts/scripts/vast-train/ablation_tensorboard.py \
+  stop "$ITERATION_DIR"
+```
+
+This validates both tmux session owners before stopping either, stops only the
+iteration's server and synchronizer, and retains cached events/logs. It records
+an opt-out so ordinary resume does not restart them. Explicit `refresh` opts back
+in; an unrelated occupied port still blocks restart. No S3 or rental operations
+are performed by `stop`.
+
+Report the **shared iteration URL** for all combos, not their internal forwarding
+URLs. Existing per-instance TensorBoard servers and forwarding remain internal
+handoff checks; the shared dashboard never authorizes instance cleanup.
+
+## Safety and failures
+
+- Preserve `vast-train-actv2.md`'s hardware, price, Git and cleanup policies.
+  Never weaken filters without asking.
+- Provisioning failures may remove only exact, provisional instances **before**
+  training launch intent. Removal must be verified by a successful, valid API
+  response before a replacement is rented.
+- Once launch intent is recorded, only the detached watcher owns cleanup.
+  It requires a directly observed remote terminal marker, including on restart
+  and in its EXIT trap. SSH/API failures, interruption, or missing tmux sessions
+  never authorize destruction.
+- A resume may restart a dead saved watcher and restore local forwarding. It
+  does not rerun terminal training or rent replacements for uncertain attempts.
+- Checker exit 1/2 blocks new launches; exit 3 requires a watcher report plus
+  confirmed removal before terminal reconciliation. Do not mark terminal runs
+  `running`, erase state, or bypass the gate to make the loop advance.
+- Driver exit 0 means handed off/reconciled (or planned), not training success;
+  1 means blocked, 2 invalid CLI input, 130 interrupted. Explicit resume attempts
+  recovery; it does not guarantee that an uncertain create can be resolved. A
+  new invocation remains independent. Never perform global old-run cleanup.
+
+## SSH endpoint recovery
+
+New create requests explicitly publish container port 22. Provisioning reads
+fresh, exact-identity-validated API data: it prefers `public_ipaddr` with
+`ports["22/tcp"][0]["HostPort"]`, then tries the recorded proxy fields. It never
+infers SSH from `direct_port_start` or trusts the CLI's cached SSH URL. Missing
+mappings permit proxy-only access. Duplicate IPv4/IPv6 bindings are accepted only
+when every binding has a valid, identical normalized host port; conflicting or
+malformed mappings fail closed. Host-key scans
+are bounded, and the selected endpoint is saved before remote setup. Resume
+retains that endpoint and refuses changed host keys or endpoint replacement.
+No SSH failure authorizes an automatic replacement rental.
+
+## Explicit abandonment of an unlaunched provisional rental
+
+Only after the user explicitly requests removal of a particular provisional
+instance, use:
+
+```bash
+uv run --frozen python .pi/prompts/scripts/vast-train/abandon_provisional.py \
+  --resume "$ITERATION_ID" --instance-id "$INSTANCE_ID" --confirm-abandon
+```
+
+This locks and validates the iteration, requires a known instance in provisioning
+with no training launch intent or accepted run, records durable abandonment
+intent, and removes only the exact saved ID/label. Successful, valid API absence
+is required before the combo becomes `abandoned`. Failed queries never prove
+removal. Interrupted verification is recovered by repeating this exact command;
+ordinary provisioning is blocked while abandonment is pending. The selected
+combo is retired without a replacement; other combos remain unchanged, and a
+later driver resume could still advance them. No new training or dashboard
+operations occur, and the pinned SHA remains unchanged. Cleanup does not require
+the old pinned checkout; provisioning still does. Launched runs must use the
+watcher-owned cancellation path below, never this helper.
+
+## Explicit cancellation of a launched run
+
+Only after the user explicitly requests cancellation of a particular instance:
+
+```bash
+uv run --frozen python .pi/prompts/scripts/vast-train/cancel_run.py \
+  --resume "$ITERATION_ID" --instance-id "$INSTANCE_ID" --wait-seconds 900
+```
+
+This locks and validates the selected iteration, confirms its exact instance
+label, requires a live saved watcher, and verifies the remote revision, run name,
+runner script and process identity before sending TERM to the runner. The runner
+writes its own terminal marker; the helper never fabricates markers or destroys
+instances. Only the saved watcher owns backup and removal. The helper waits for
+its report and independently confirms absence through a valid API response.
+Interrupted verification is recoverable by repeating this exact cancellation
+command; do not run the sweep driver merely to cancel (it could advance other
+combos). No Git gate or saved revision is changed, and no new training starts.
+
+To cancel every launched run in one iteration at once, use `/stop-ablation-runs`
+with a full iteration ID, a short `i<12 hex>` suffix, or a directory. To cancel a
+single run by its shared-TensorBoard name (`<combo>/<run-name>`) and leave the
+iteration's other runs running, use `/stop-ablation-run`. Both signal through
+this same watcher-owned path and delete no local records or S3 artifacts.
+
+## Create diagnostics and provider-confirmed recovery
+
+Create requests use `create_request.py`, a single-shot API adapter, rather than
+CLI exit codes (the Vast CLI may print an HTTP error and still exit 0). Before
+printing its result, the adapter atomically records an allowlisted receipt at
+`combos/<combo>/create-<label>.json`: request identity, HTTP status when available,
+result classification, reason, and response size/hash. Raw responses, headers,
+credentials and free-form provider messages are not persisted. HTTP errors,
+transport errors, malformed/contradictory responses and missing receipts remain
+uncertain; they never authorize replacement creates, except for the narrow
+unavailable-offer rejection below. Explicit successful-HTTP `success: false`
+responses without an instance identity are recorded as rejection.
+
+The only HTTP-error exception is HTTP 400 with a validated JSON object containing
+`success: false`, `error: "invalid_args"`, and exactly
+`error 404/3603: no_such_ask Instance type by id <requested-offer-id> is not available.`
+in `msg`, accepting either the documented single space or the observed two spaces
+between `no_such_ask` and `Instance`. The two-space form was verified offline
+against the saved 142-byte response SHA-256 from iteration
+`20261013T125627Z-d77828791c1b`; no other whitespace is normalized. Only those
+fields and an optional matching integer `ask_id` are allowed;
+instance/contract fields (even null), duplicate fields, mismatched IDs or extra
+text remain uncertain. Vast's [official create-instance specification](https://github.com/vast-ai/docs/blob/main/api-reference/openapi/yaml/create_instance.yaml)
+describes the nested 404/3603 signature as **Offer not found or not available**;
+the observed HTTP 400 wrapper alone is not evidence of rejection. This validated
+response is saved as `unavailable_offer_rejection`. After a successful exact-label
+absence check, provisioning may search afresh with unchanged filters and price
+cap, excluding attempted machines and retaining the three-attempt limit. A live
+exact-label match or failed instance query blocks replacement. Historical unknown
+receipts with numeric diagnostics alone are not upgraded to rejection.
+
+Resume replays a saved receipt without resending the request. Exact-label
+visibility is checked for up to 60 seconds with read-only queries; multiple
+matches block immediately. Persistent absence alone is not proof of rejection.
+Do not keep blindly resuming an unchanged ambiguity, edit state by hand, or offer
+an absence-based override. Ask Vast for authoritative confirmation about the
+exact label, offer ID and request time; do not infer rejection from CLI exit 0.
+
+For an unlaunched request with no known instance identity, an operator who has
+obtained and reviewed provider confirmation that **no rental was created** may
+record it using the dedicated recovery helper. This is an explicit human
+attestation, not automated verification of a support ticket. An agent must not
+invent confirmation or fabricate evidence to advance the sweep.
+
+Create a local, non-secret JSON evidence file containing exactly these fields
+(the identity values must come from that attempt's saved state):
+
+```json
+{
+  "iteration_id": "<saved iteration ID>",
+  "combo_id": "<combo ID>",
+  "label": "<exact saved create label>",
+  "offer_id": 123,
+  "created_at": "<exact saved request timestamp>",
+  "conclusion": "provider_confirmed_no_rental",
+  "provider_reference": "<support ticket or request reference, not a URL>",
+  "reviewed_by": "<operator name>"
+}
+```
+
+Then, only after explicit operator confirmation:
+
+```bash
+uv run --frozen python .pi/prompts/scripts/vast-train/resolve_create.py \
+  --resume "$ITERATION_ID" --combo "$COMBO_ID" --evidence "$EVIDENCE_PATH" \
+  --confirm-provider-rejection
+```
+
+The helper locks and validates only that iteration, checks exact-label absence
+with a successful valid API response, preserves hashed evidence and all attempt
+history, and resolves only the uncertain unlaunched attempt. It does not rent,
+launch, destroy, or restart services. Failed API queries, existing instances,
+known create identities/results, or any training launch intent block recovery.
+The three-attempt cap remains unchanged. Use normal explicit resume afterward.
+
+Recovery does not change the pinned SHA or bypass Git checks. Source fixes make
+the checkout dirty, and committing them advances its revision; provisioning an
+older iteration still requires its original clean, anonymously synchronized
+pinned checkout. Never substitute the new SHA, automatically repair Git, or
+resume/provision as part of testing these fixes. Existing watchers remain owned
+by their saved snapshots. Tests use mocked API responses, not live rentals.
+
+## Logging and response
+
+Keep driver stdout/stderr visible; do not redirect or suppress them. The driver
+prints the iteration ID, log directory, resume command, combo count, elapsed
+stage updates, and command start/finish messages. It streams redacted output
+from configured diagnostic logs to stderr and emits waiting heartbeats every
+30 seconds during commands. Sensitive and unlogged raw command output stays
+hidden. Each verified handoff prints a current summary, including TensorBoard
+URLs; handoff is not training completion. Detached watcher output remains in
+its local logs after the driver returns. These updates apply to new driver
+processes, not an already-running process.
+
+All records are ignored and local:
+`.vast-train-local/ablations/<spec-name>/<iteration-id>/` contains
+`manifest.json`, `state.json`, `inputs/`, `configs/`, `events.jsonl`,
+`driver.log`, `preflight.log`, `resolution.log`, `combos/`, and `summary.txt`.
+Per-instance `.vast-train-local/toy-act-<ID>/` contains setup logs, pinned host
+keys, sensitive mode-600 `instance.json`, `dataset.json`, hashed setup/watcher
+snapshots, watcher output/log, `handoff.json`, and final `report.txt`. Interrupted
+nonterminal watcher reports are preserved in `report-history/` before recovery.
+
+Keep the foreground driver bounded with a timeout appropriate to setup/dataset
+size; TERM records an interruption and never cleans up live runs. If interrupted,
+report the iteration ID and resume command; do not restart the whole command as
+an implicit retry. No reboot supervision is installed: resume explicitly after
+a reboot to recover this iteration's watchers.
+
+Report one concise table with combo status, instance ID and TensorBoard URL,
+then the iteration directory, logs and explicit resume command if needed. For
+failures, include the relevant local diagnostic path. Do not repeatedly ask
+about old runs or poll training after handoff. Never print credentials, presigned
+URLs or raw sensitive instance records; never commit generated state/configs.
