@@ -8,6 +8,7 @@ dependencies = [
     "matplotlib>=3.11.2",
     "numcodecs<0.16",
     "numpy>=2.5.4",
+    "torch==2.10.0",
     "zarr<3",
 ]
 
@@ -17,3 +18,11 @@ dev = [
     "jupyterlab>=4.6.5",
     "pytest>=9.2.0",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
