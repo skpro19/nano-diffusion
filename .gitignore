@@ -3,6 +3,10 @@ docs/
 __pycache__/
 .venv/
 
+# local scratch files
+debug/
+notes/
+
 # editor swap files
 *.swp
 
