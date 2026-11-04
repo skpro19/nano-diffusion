@@ -6,6 +6,12 @@ __pycache__/
 # local scratch files
 debug/
 notes/
+notebooks/
+
+# jupyter scratch state
+.ipynb_checkpoints/
+.jupyter/
+.ipython/
 
 # editor swap files
 *.swp
