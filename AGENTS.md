@@ -3,7 +3,7 @@
 
 ## General Instructions
 - use Context7 when you are not sure or need official implementation details; if Context7 is unavailable, use the closest official upstream documentation source
-- the git policy lives in `.pi/skills/git/SKILL.md` — load it with `/skill:git` before committing or pushing
+- the git policy lives in `.cursor/skills/git/SKILL.md` — load it with `/skill:git` before committing or pushing
 - for `.canvas.tsx` files, follow `.cursor/rules/canvas.mdc` (design template based on `cs231n-multi-head-attention.canvas.tsx`)
 
 ## Project Structure (planned)
@@ -77,33 +77,10 @@ Notes:
 - use `uv add` to add dependencies
 - use `uv run` for Python scripts, tests, and CLIs instead of calling `python` directly
 
-## Python Best Practices 
-- do not use `dataclass` decorator
-- do not use Ruff for linting or formatting
-- use keyword-only arguments for functions/methods with multiple parameters: put a bare `*` after `self` (or after positional-only args), then name every remaining parameter so callers must pass them by keyword (e.g. `def append_step(self, *, obs: ..., action: ...) -> None`)
-- keep a function's return annotation on the `def` line when the whole signature fits one line (e.g. `def make_dagger_round_seeds(*, seed: int, rounds: int) -> list[int]:`)
-- when a signature is broken across lines, put the closing `)`, `-> ReturnType`, and `:` on the **same line as the last parameter** — not on a separate line (e.g. `    epoch: int,) -> None:` with a trailing comma, or `    epoch: int) -> None:` without one); this keeps the full header collapsible as one block in the editor
-
 ## Vast.ai Administration
 - API key is in `.env` as `VAST_API_KEY`
 - The `vastai show user` CLI command is unreliable (returns 400); use the REST API instead
 - Query balance via: `source .env && curl -sL -H "Authorization: Bearer $VAST_API_KEY" "https://console.vast.ai/api/v0/users/current"` — the `credit` field is the available balance
-
-## Git Commits
-- follow `.pi/skills/git/SKILL.md` for the full git policy; the rules below are the ones most often missed
-- use conventional commits: `<type>: <short summary>` — one subject line only
-- common types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`, `ci`, `build`, `perf`, `revert`
-- do **not** add a commit body unless the user explicitly asks for one
-- summary after `type:` must start with a lowercase letter, have no trailing period, and stay concise (about 6–12 words)
-- use plain types only — no scopes (`feat(scope): ...` is wrong)
-- prefer intent/outcome over implementation detail; avoid vague subjects like `update`, `changes`, `misc`
-- before committing, check recent style with `git log --oneline -10` and match it
-- if the message is wrong, fix it **before** pushing; never push then amend/force-push unless the user explicitly asks to rewrite published history
-
-Examples:
-- `feat: add viewer camera capture and recalibrate top-camera`
-- `fix: prevent calibration overwrite unless toggle was pressed`
-- `docs: clarify host-client branch sync workflow`
 
 ## Sections to ignore
 Do not treat these as code changes; ignore them during development and review:
